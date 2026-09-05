@@ -1,0 +1,1423 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>Trading Chart</title>
+<script src="https://unpkg.com/lightweight-charts@5.0.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #131a24;
+    --panel-2: #1a2230;
+    --border: #232c3a;
+    --text: #d7dde5;
+    --text-dim: #7c8797;
+    --accent: #3b82f6;
+    --green: #26a69a;
+    --red: #ef5350;
+  }
+  html[data-theme="light"] {
+    --bg: #ffffff;
+    --panel: #f3f4f6;
+    --panel-2: #e5e7eb;
+    --border: #d1d5db;
+    --text: #1f2937;
+    --text-dim: #6b7280;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 13px;
+    height: 100vh;   /* fallback buat browser lama yang belum kenal dvh */
+    height: 100dvh;  /* viewport height yang beneran akurat di HP (Brave, Chrome mobile) */
+    overflow: hidden;
+  }
+  #app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    height: 100dvh;
+  }
+
+  /* ---- Toolbar atas: 2 baris rapi, tiap baris scroll horizontal sendiri ---- */
+  #topbar {
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    gap: 6px;
+    padding: 8px 10px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+  #topbar-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  #topbar-row::-webkit-scrollbar { display: none; }
+  select, button, input[type=text] {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 9px;
+    font-size: 12px;
+  }
+  button { cursor: pointer; }
+  button:active { transform: scale(0.97); }
+  button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .sep { width: 1px; height: 20px; background: var(--border); margin: 0 2px; }
+  #status {
+    position: absolute;
+    left: 8px;
+    bottom: 8px;
+    color: var(--text-dim);
+    font-size: 10px;
+    background: rgba(19, 26, 36, 0.85);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 3px 7px;
+    white-space: normal;
+    max-width: 70%;
+    z-index: 5;
+    line-height: 1.4;
+  }
+  #countdown {
+    position: absolute;
+    right: 8px;
+    color: var(--text-dim);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 2px 5px;
+    white-space: nowrap;
+    z-index: 5;
+    pointer-events: none;
+    transition: top 0.2s ease;
+    min-width: 34px;
+    text-align: center;
+  }
+
+  /* ---- Layout utama: chart full width ---- */
+  #main {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+  }
+  #chart-col { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  #chart-container { flex: 1; position: relative; min-height: 150px; }
+  #rsi-container { height: 110px; border-top: 1px solid var(--border); display: none; flex-shrink: 0; }
+  #rsi-resize-handle {
+    height: 7px;
+    background: var(--panel-2);
+    border-top: 1px solid var(--border);
+    cursor: ns-resize;
+    flex-shrink: 0;
+    display: none;
+    position: relative;
+  }
+  #rsi-resize-handle.show { display: block; }
+  #rsi-resize-handle::after {
+    content: "";
+    position: absolute; top: 2px; left: 50%; transform: translateX(-50%);
+    width: 28px; height: 3px; border-radius: 2px; background: var(--text-dim);
+  }
+
+  /* ---- Overlay mode Replay: tengah atas chart, icon-only ---- */
+  #replay-overlay {
+    position: absolute;
+    top: 46px;
+    left: 8px;
+    z-index: 6;
+    display: none;
+    align-items: center;
+    gap: 4px;
+    background: rgba(19, 26, 36, 0.9);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 4px 6px;
+    max-width: 92vw;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  #replay-overlay.show { display: flex; }
+  #replay-overlay .icon-btn { width: 26px; height: 26px; flex-shrink: 0; }
+  #replay-overlay input[type=range] { width: 70px; flex-shrink: 0; }
+  #replay-index { color: var(--text-dim); font-size: 10px; min-width: 44px; text-align: right; flex-shrink: 0; }
+  .mini-select {
+    font-size: 10px;
+    padding: 3px 4px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    flex-shrink: 0;
+  }
+  #replay-mode-dot {
+    display: block; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--green); /* hijau = live, jadi oranye pas mode replay */
+  }
+  #replay-mode-dot.replay { background: #f59e0b; }
+
+  /* ---- AI: floating button + popup kecil (bukan sidebar penuh) ---- */
+  /* ---- Trade bar bawah: SELL/BUY besar ala TradingView ---- */
+  #trade-bar {
+    display: flex;
+    flex-shrink: 0;
+    height: 54px;
+  }
+  #trade-bar button {
+    flex: 1;
+    border: none;
+    border-radius: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1px;
+    color: #fff;
+  }
+  #btn-sell-market { background: var(--red); }
+  #btn-buy-market { background: var(--green); }
+  .trade-label { font-size: 12px; font-weight: 700; letter-spacing: 0.5px; }
+  .trade-price { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+  #ai-fab {
+    position: fixed;
+    right: 14px;
+    bottom: 74px;
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    font-size: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.5);
+    z-index: 30;
+    cursor: pointer;
+    padding: 0;
+  }
+  #ai-popup {
+    position: fixed;
+    right: 10px;
+    bottom: 128px;
+    width: min(340px, 92vw);
+    height: min(60vh, 520px);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    z-index: 31;
+    box-shadow: 0 10px 34px rgba(0,0,0,0.55);
+    transform: translateY(16px) scale(0.96);
+    opacity: 0;
+    pointer-events: none;
+    transition: transform .15s ease, opacity .15s ease;
+    overflow: hidden;
+  }
+  #ai-popup.open { transform: translateY(0) scale(1); opacity: 1; pointer-events: auto; }
+  #ai-popup-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+    flex-shrink: 0;
+  }
+  #ai-popup-header button {
+    background: none; border: none; color: var(--text-dim);
+    font-size: 18px; cursor: pointer; padding: 2px 6px; line-height: 1;
+  }
+  #ai-log {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .msg { padding: 8px 10px; border-radius: 8px; line-height: 1.45; white-space: pre-wrap; }
+  .msg.user { background: var(--accent); color: #fff; align-self: flex-end; max-width: 90%; }
+  .msg.ai { background: var(--panel-2); align-self: flex-start; max-width: 95%; }
+  .msg.err { background: #3a1c1c; color: #ff9d9d; }
+  #ai-input-row { display: flex; gap: 6px; padding: 10px; border-top: 1px solid var(--border); flex-shrink: 0; }
+  #ai-input-row input { flex: 1; }
+  .disclaimer { font-size: 10px; color: var(--text-dim); padding: 0 10px 8px; flex-shrink: 0; }
+
+  /* ---- Bar konfirmasi hapus 1 objek gambar (bukan hapus semua) ---- */
+  #select-actionbar {
+    position: fixed;
+    left: 50%;
+    bottom: 66px;
+    transform: translateX(-50%) translateY(16px);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    z-index: 32;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .15s ease, transform .15s ease;
+  }
+  #select-actionbar.show { opacity: 1; pointer-events: auto; transform: translateX(-50%) translateY(0); }
+  #select-label { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
+  #select-actionbar button { padding: 6px 12px; border-radius: 6px; border: none; cursor: pointer; font-size: 12px; }
+  #select-delete-btn { background: var(--red); color: #fff; }
+  #select-cancel-btn { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }
+  #pip-adjust-group { display: none; align-items: center; gap: 4px; }
+  #pip-adjust-group.show { display: flex; }
+  #pip-input { width: 62px; padding: 6px; }
+  #pip-apply-btn { background: var(--accent); color: #fff; }
+
+  #brand {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 700;
+    font-size: 14px;
+    padding-right: 6px;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  #brand img { height: 24px; width: auto; display: block; }
+
+  /* ---- Overlay simbol & timeframe di pojok kiri atas chart, ala TradingView ---- */
+  #symbol-overlay {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 5;
+    display: flex;
+    gap: 4px;
+    background: rgba(19, 26, 36, 0.85);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 3px;
+  }
+  #symbol-overlay select {
+    padding: 4px 6px;
+    font-size: 11px;
+    background: transparent;
+    border: none;
+  }
+  #symbol-overlay select:first-child { border-right: 1px solid var(--border); border-radius: 0; }
+
+  /* ---- Sidebar kiri: tools gambar, icon-only ---- */
+  #left-toolbar {
+    width: 42px;
+    flex-shrink: 0;
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 8px 0;
+    gap: 4px;
+  }
+  .icon-btn {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: var(--text-dim);
+    padding: 0;
+  }
+  .icon-btn.active { background: var(--accent); color: #fff; }
+  .left-sep { width: 24px; height: 1px; background: var(--border); margin: 4px 0; }
+
+  /* ---- Panel Indikator (modal) ---- */
+  #indicators-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+    z-index: 40; display: none;
+  }
+  #indicators-overlay.show { display: block; }
+  #indicators-panel {
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(320px, 90vw);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    z-index: 41;
+    display: none;
+    box-shadow: 0 10px 34px rgba(0,0,0,0.6);
+  }
+  #indicators-panel.show { display: block; }
+  #indicators-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 14px; border-bottom: 1px solid var(--border); font-weight: 600;
+  }
+  #indicators-header button { background: none; border: none; color: var(--text-dim); font-size: 16px; }
+  #indicators-body { padding: 10px 14px; display: flex; flex-direction: column; gap: 12px; }
+  .indicator-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .indicator-row label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .indicator-row input[type=number] { width: 60px; padding: 5px; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="topbar">
+    <div id="topbar-row">
+      <div id="brand"><img src="/logo-cincin.svg" alt="EP Chart" /><span>EP Chart</span></div>
+      <button id="btn-reload">Muat Ulang</button>
+      <div class="sep"></div>
+      <button id="indicators-btn" class="icon-btn" title="Indikator">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M2 12h4l2-7 4 14 3-9 2 5h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button id="theme-btn" class="icon-btn" title="Ganti tema">
+        <svg id="theme-icon" viewBox="0 0 24 24" width="18" height="18"><path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.389 5.389 0 0 1-4.4 2.26 5.403 5.403 0 0 1-3.94-9.1c-.36-.05-.72-.08-1.1-.08z" fill="currentColor"/></svg>
+      </button>
+      <button id="replay-open-btn" class="icon-btn" title="Mode Replay">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 8v4l3 2M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div id="main">
+    <div id="left-toolbar">
+      <button id="tool-cursor" class="icon-btn active" title="Cursor">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 3l16 7-6.5 2.5L11 19z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+      </button>
+      <button id="tool-trend" class="icon-btn" title="Trend Line">
+        <svg viewBox="0 0 24 24" width="18" height="18"><line x1="4" y1="20" x2="20" y2="4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <button id="tool-rect" class="icon-btn" title="Rectangle">
+        <svg viewBox="0 0 24 24" width="18" height="18"><rect x="4" y="6" width="16" height="12" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+      </button>
+      <div class="left-sep"></div>
+      <button id="btn-clear-drawings" class="icon-btn" title="Hapus semua gambar">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+    <div id="chart-col">
+      <div id="chart-container">
+        <div id="symbol-overlay">
+          <select id="instrument">
+            <option value="XAU_USD">XAUUSD</option>
+            <option value="EUR_USD">EURUSD</option>
+            <option value="GBP_USD">GBPUSD</option>
+            <option value="USD_JPY">USDJPY</option>
+            <option value="BTC_USD">BTCUSD</option>
+          </select>
+          <select id="granularity">
+            <option value="M1">M1</option>
+            <option value="M5">M5</option>
+            <option value="M15" selected>M15</option>
+            <option value="M30">M30</option>
+            <option value="H1">H1</option>
+            <option value="H4">H4</option>
+          </select>
+        </div>
+        <div id="replay-overlay">
+          <select id="replay-granularity" class="mini-select">
+            <option value="M1">M1</option>
+            <option value="M5">M5</option>
+            <option value="M15" selected>M15</option>
+            <option value="M30">M30</option>
+            <option value="H1">H1</option>
+            <option value="H4">H4</option>
+          </select>
+          <button id="replay-toggle-mode" class="icon-btn" title="Live/Replay"><span id="replay-mode-dot"></span></button>
+          <button id="replay-reset" class="icon-btn" title="Reset ke awal data">⏮</button>
+          <button id="replay-step-back" class="icon-btn" title="Mundur 1 candle">◀</button>
+          <button id="replay-play" class="icon-btn" title="Play/Pause">▶</button>
+          <button id="replay-step" class="icon-btn" title="Maju 1 candle">⏭</button>
+          <input type="range" id="replay-slider" min="0" max="100" value="100" />
+          <span id="replay-index">-</span>
+        </div>
+        <span id="countdown"></span>
+        <span id="status">Memuat...</span>
+      </div>
+      <div id="rsi-resize-handle"></div>
+      <div id="rsi-container"></div>
+    </div>
+  </div>
+
+  <div id="trade-bar">
+    <button id="btn-sell-market">
+      <span class="trade-label">SELL</span>
+      <span class="trade-price" id="sell-price">-</span>
+    </button>
+    <button id="btn-buy-market">
+      <span class="trade-label">BUY</span>
+      <span class="trade-price" id="buy-price">-</span>
+    </button>
+  </div>
+
+</div>
+
+<button id="ai-fab" title="AI Chat">💬</button>
+
+<div id="indicators-panel">
+  <div id="indicators-header">
+    <span>Indikator</span>
+    <button id="indicators-close">✕</button>
+  </div>
+  <div id="indicators-body">
+    <div class="indicator-row">
+      <label><input type="checkbox" id="ind-ema-toggle" /> EMA</label>
+      <input type="number" id="ind-ema-period" value="20" min="1" />
+    </div>
+    <div class="indicator-row">
+      <label><input type="checkbox" id="ind-rsi-toggle" /> RSI</label>
+      <input type="number" id="ind-rsi-period" value="14" min="2" />
+    </div>
+    <div class="indicator-row">
+      <label><input type="checkbox" id="ind-volume-toggle" /> Volume</label>
+    </div>
+  </div>
+</div>
+
+<div id="indicators-overlay"></div>
+
+<div id="select-actionbar">
+  <span id="select-label"></span>
+  <span id="pip-adjust-group">
+    <input type="number" id="pip-input" placeholder="pips" />
+    <button id="pip-apply-btn">Geser</button>
+  </span>
+  <button id="select-delete-btn">Hapus</button>
+  <button id="select-cancel-btn">Batal</button>
+</div>
+
+<div id="ai-popup">
+  <div id="ai-popup-header">
+    <span>AI Chart Assistant</span>
+    <button id="ai-popup-close">✕</button>
+  </div>
+  <div id="ai-log"></div>
+  <div class="disclaimer">Analisa AI ini alat bantu belajar membaca chart, bukan rekomendasi/sinyal trading.</div>
+  <div id="ai-input-row">
+    <input type="text" id="ai-input" placeholder="Tanya soal chart ini..." />
+    <button id="ai-send">Kirim</button>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   STATE
+   ============================================================ */
+let allCandles = [];       // seluruh data dari server (array of {time,open,high,low,close,volume})
+let visibleCount = 0;      // berapa candle yang lagi ditampilkan (buat mode replay)
+let mode = "live";         // "live" atau "replay"
+let replayTimer = null;
+let currentInstrument = document.getElementById("instrument").value;
+let currentGranularity = document.getElementById("granularity").value;
+
+let activeTool = "cursor"; // cursor | trend | rect | tp | sl
+let drawings = [];         // {type:'trend'|'rect', p1:{time,price}, p2:{time,price}}
+let pendingPoint = null;   // titik pertama saat lagi gambar trend/rect
+let priceLines = [];       // referensi price line TP/SL biar bisa dihapus
+
+/* ============================================================
+   CHART SETUP (lightweight-charts v5)
+   ============================================================ */
+const chartContainer = document.getElementById("chart-container");
+const rsiContainer = document.getElementById("rsi-container");
+
+function currentChartColors() {
+  const dark = document.documentElement.getAttribute("data-theme") !== "light";
+  return dark
+    ? { bg: "#0d1117", text: "#d7dde5", grid: "#1a2230", border: "#232c3a" }
+    : { bg: "#ffffff", text: "#1f2937", grid: "#e5e7eb", border: "#d1d5db" };
+}
+
+function buildChartOptions() {
+  const c = currentChartColors();
+  return {
+    layout: { background: { color: c.bg }, textColor: c.text, attributionLogo: false },
+    grid: { vertLines: { color: c.grid }, horzLines: { color: c.grid } },
+    rightPriceScale: { borderColor: c.border },
+    timeScale: { borderColor: c.border, timeVisible: true, secondsVisible: false },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+  };
+}
+
+const mainChart = LightweightCharts.createChart(chartContainer, buildChartOptions());
+const candleSeries = mainChart.addSeries(LightweightCharts.CandlestickSeries, {
+  upColor: "#26a69a", downColor: "#ef5350",
+  borderUpColor: "#26a69a", borderDownColor: "#ef5350",
+  wickUpColor: "#26a69a", wickDownColor: "#ef5350",
+});
+
+// Logo EP Chart (dua cincin) jadi watermark tipis di chart utama, gantiin logo TradingView
+LightweightCharts.createImageWatermark(mainChart.panes()[0], "/logo-cincin.svg", {
+  alpha: 0.15,
+  padding: 16,
+});
+
+const emaSeries = mainChart.addSeries(LightweightCharts.LineSeries, {
+  color: "#f0b90b", lineWidth: 2, priceLineVisible: false, lastValueVisible: false,
+});
+
+// Volume sekarang OVERLAY di dalam chart utama (kayak TradingView), bukan
+// panel terpisah — pakai price scale sendiri yang cuma makan 20% bawah pane.
+const volumeSeries = mainChart.addSeries(LightweightCharts.HistogramSeries, {
+  priceFormat: { type: "volume" },
+  priceScaleId: "volume-scale",
+});
+mainChart.priceScale("volume-scale").applyOptions({
+  scaleMargins: { top: 0.8, bottom: 0 },
+});
+
+const rsiChart = LightweightCharts.createChart(rsiContainer, {
+  ...buildChartOptions(),
+  timeScale: { visible: false },
+});
+const rsiSeries = rsiChart.addSeries(LightweightCharts.LineSeries, {
+  color: "#a855f7", lineWidth: 2,
+});
+rsiSeries.createPriceLine({ price: 70, color: "#555", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed });
+rsiSeries.createPriceLine({ price: 30, color: "#555", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed });
+
+// Sinkronkan pergerakan sumbu waktu antara chart utama & RSI
+mainChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+  if (!range) return;
+  rsiChart.timeScale().setVisibleLogicalRange(range);
+});
+
+function resizeCharts() {
+  const w = chartContainer.clientWidth;
+  mainChart.resize(w, chartContainer.clientHeight);
+  // Pakai lebar dari chart-container (bukan rsiContainer.clientWidth) karena
+  // kalau rsiContainer baru aja di-unhide, clientWidth-nya bisa masih 0
+  // sebelum browser sempat reflow — ini sumber bug "RSI nggak keliatan".
+  rsiChart.resize(w, rsiContainer.clientHeight || 0);
+}
+window.addEventListener("resize", resizeCharts);
+
+/* ---- Drag buat resize tinggi panel RSI (tarik handle di atasnya) ---- */
+const rsiResizeHandle = document.getElementById("rsi-resize-handle");
+let rsiDragging = false, rsiDragStartY = 0, rsiDragStartHeight = 0;
+
+rsiResizeHandle.addEventListener("pointerdown", (ev) => {
+  rsiDragging = true;
+  rsiDragStartY = ev.clientY;
+  rsiDragStartHeight = rsiContainer.clientHeight;
+  ev.preventDefault();
+});
+window.addEventListener("pointermove", (ev) => {
+  if (!rsiDragging) return;
+  const delta = rsiDragStartY - ev.clientY; // tarik ke atas = RSI makin tinggi
+  const newHeight = Math.min(320, Math.max(60, rsiDragStartHeight + delta));
+  rsiContainer.style.height = newHeight + "px";
+  resizeCharts();
+});
+window.addEventListener("pointerup", () => { rsiDragging = false; });
+
+/* ============================================================
+   PANEL INDIKATOR — EMA, RSI, Volume. Semua OFF secara default
+   (termasuk EMA, yang dulu selalu nyala). User nyalain lewat
+   panel ini, plus atur periodenya (warna tetap default, sesuai
+   yang diminta).
+   ============================================================ */
+let showEMA = false, showRSI = false, showVolume = false;
+let emaPeriod = 20, rsiPeriod = 14;
+
+const indicatorsPanel = document.getElementById("indicators-panel");
+const indicatorsOverlay = document.getElementById("indicators-overlay");
+
+function openIndicatorsPanel() {
+  indicatorsPanel.classList.add("show");
+  indicatorsOverlay.classList.add("show");
+}
+function closeIndicatorsPanel() {
+  indicatorsPanel.classList.remove("show");
+  indicatorsOverlay.classList.remove("show");
+}
+document.getElementById("indicators-btn").addEventListener("click", openIndicatorsPanel);
+document.getElementById("indicators-close").addEventListener("click", closeIndicatorsPanel);
+indicatorsOverlay.addEventListener("click", closeIndicatorsPanel);
+
+document.getElementById("ind-ema-toggle").addEventListener("change", (e) => {
+  showEMA = e.target.checked;
+  if (!showEMA) emaSeries.setData([]);
+  renderVisibleData();
+});
+document.getElementById("ind-ema-period").addEventListener("change", (e) => {
+  emaPeriod = Math.max(1, parseInt(e.target.value) || 20);
+  if (showEMA) renderVisibleData();
+});
+document.getElementById("ind-rsi-toggle").addEventListener("change", (e) => {
+  showRSI = e.target.checked;
+  rsiResizeHandle.classList.toggle("show", showRSI);
+  if (!showRSI) {
+    rsiContainer.style.display = "none";
+    rsiSeries.setData([]);
+    resizeCharts();
+    return;
+  }
+  rsiContainer.style.display = "block";
+  rsiContainer.style.height = rsiContainer.style.height || "110px";
+  // Resize langsung pakai lebar chart utama + tinggi yang barusan diset,
+  // jangan nunggu baca clientHeight yang bisa masih 0 kalau reflow belum jalan.
+  rsiChart.resize(chartContainer.clientWidth, parseInt(rsiContainer.style.height));
+  renderVisibleData();
+  requestAnimationFrame(() => requestAnimationFrame(() => { resizeCharts(); renderVisibleData(); }));
+});
+document.getElementById("ind-rsi-period").addEventListener("change", (e) => {
+  rsiPeriod = Math.max(2, parseInt(e.target.value) || 14);
+  if (showRSI) renderVisibleData();
+});
+document.getElementById("ind-volume-toggle").addEventListener("change", (e) => {
+  showVolume = e.target.checked;
+  if (!showVolume) volumeSeries.setData([]);
+  else renderVisibleData();
+});
+
+/* ============================================================
+   TEMA GELAP/TERANG — CSS var buat elemen HTML biasa, plus
+   applyOptions() manual buat chart (canvas nggak ikut CSS var).
+   Disimpan di localStorage biar diingat pas dibuka lagi.
+   ============================================================ */
+function applyThemeToCharts() {
+  const opts = buildChartOptions();
+  mainChart.applyOptions({ layout: opts.layout, grid: opts.grid, rightPriceScale: opts.rightPriceScale, timeScale: opts.timeScale });
+  rsiChart.applyOptions({ layout: opts.layout, grid: opts.grid, rightPriceScale: opts.rightPriceScale });
+}
+
+function setTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  localStorage.setItem("ep-chart-theme", theme);
+  applyThemeToCharts();
+}
+
+document.getElementById("theme-btn").addEventListener("click", () => {
+  const isLight = document.documentElement.getAttribute("data-theme") === "light";
+  setTheme(isLight ? "dark" : "light");
+});
+
+// Muat preferensi tema tersimpan (default: gelap)
+setTheme(localStorage.getItem("ep-chart-theme") || "dark");
+
+/* ============================================================
+   INDIKATOR: EMA & RSI (dihitung manual, nggak pakai library luar)
+   ============================================================ */
+function calcEMA(candles, period) {
+  const k = 2 / (period + 1);
+  let emaPrev = candles[0].close;
+  const out = [{ time: candles[0].time, value: emaPrev }];
+  for (let i = 1; i < candles.length; i++) {
+    emaPrev = candles[i].close * k + emaPrev * (1 - k);
+    out.push({ time: candles[i].time, value: emaPrev });
+  }
+  return out;
+}
+
+function calcRSI(candles, period = 14) {
+  const out = [];
+  let gains = 0, losses = 0;
+  for (let i = 1; i <= period && i < candles.length; i++) {
+    const diff = candles[i].close - candles[i - 1].close;
+    if (diff >= 0) gains += diff; else losses -= diff;
+  }
+  let avgGain = gains / period, avgLoss = losses / period;
+  out.push({ time: candles[period] ? candles[period].time : candles[0].time, value: 100 - 100 / (1 + (avgGain / (avgLoss || 1e-9))) });
+
+  for (let i = period + 1; i < candles.length; i++) {
+    const diff = candles[i].close - candles[i - 1].close;
+    const gain = diff > 0 ? diff : 0;
+    const loss = diff < 0 ? -diff : 0;
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+    const rs = avgGain / (avgLoss || 1e-9);
+    out.push({ time: candles[i].time, value: 100 - 100 / (1 + rs) });
+  }
+  return out;
+}
+
+/* ============================================================
+   RENDER DATA (dipakai baik mode live maupun replay)
+   ============================================================ */
+function renderVisibleData() {
+  const slice = allCandles.slice(0, visibleCount);
+  if (slice.length === 0) return;
+
+  const toUnix = (t) => Math.floor(new Date(t).getTime() / 1000);
+
+  candleSeries.setData(slice.map(c => ({
+    time: toUnix(c.time), open: c.open, high: c.high, low: c.low, close: c.close,
+  })));
+
+  if (showEMA && slice.length >= emaPeriod) {
+    emaSeries.setData(calcEMA(slice, emaPeriod).map(p => ({ time: toUnix(p.time), value: p.value })));
+  }
+  if (showRSI && slice.length > rsiPeriod + 1) {
+    rsiSeries.setData(calcRSI(slice, rsiPeriod).map(p => ({ time: toUnix(p.time), value: p.value })));
+  }
+  if (showVolume) {
+    volumeSeries.setData(slice.map(c => ({
+      time: toUnix(c.time), value: c.volume,
+      color: c.close >= c.open ? "rgba(38,166,154,0.5)" : "rgba(239,83,80,0.5)",
+    })));
+  }
+
+  document.getElementById("replay-index").textContent = `${visibleCount}/${allCandles.length}`;
+
+  const lastPrice = slice[slice.length - 1].close;
+  const decimals = lastPrice < 100 ? 4 : 2;
+  document.getElementById("sell-price").textContent = lastPrice.toFixed(decimals);
+  document.getElementById("buy-price").textContent = lastPrice.toFixed(decimals);
+}
+
+/* ============================================================
+   AMBIL DATA DARI BACKEND
+   ============================================================ */
+let lastFetchAt = 0;
+const MIN_FETCH_GAP_MS = 8000; // jaga jarak biar nggak kena limit TwelveData (8 request/menit di free tier)
+
+async function loadCandles(silent = false) {
+  const statusEl = document.getElementById("status");
+  const now = Date.now();
+  if (now - lastFetchAt < MIN_FETCH_GAP_MS) {
+    if (!silent) {
+      const waitSec = Math.ceil((MIN_FETCH_GAP_MS - (now - lastFetchAt)) / 1000);
+      statusEl.textContent = `Baru aja refresh — tunggu ${waitSec} detik lagi (biar nggak kena limit API gratis)`;
+    }
+    return;
+  }
+  lastFetchAt = now;
+
+  if (!silent) statusEl.textContent = "Memuat data...";
+  currentInstrument = document.getElementById("instrument").value;
+  currentGranularity = document.getElementById("granularity").value;
+
+  try {
+    const res = await fetch(`/api/candles?instrument=${currentInstrument}&granularity=${currentGranularity}&count=500`);
+    const data = await res.json();
+    if (data.error) {
+      statusEl.textContent = "Error: " + data.error;
+      return;
+    }
+    allCandles = data.candles;
+    visibleCount = allCandles.length;
+    document.getElementById("replay-slider").max = allCandles.length - 1;
+    document.getElementById("replay-slider").value = allCandles.length - 1;
+    renderVisibleData();
+    const jam = new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    statusEl.textContent = `${currentInstrument} ${currentGranularity} — ${allCandles.length} candle — update ${jam}`;
+  } catch (e) {
+    statusEl.textContent = "Gagal konek ke server: " + e.message;
+  }
+}
+
+document.getElementById("btn-reload").addEventListener("click", () => loadCandles(false));
+document.getElementById("instrument").addEventListener("change", () => { loadCandles(); scheduleAutoRefresh(); });
+document.getElementById("granularity").addEventListener("change", (e) => {
+  document.getElementById("replay-granularity").value = e.target.value;
+  loadCandles(); scheduleAutoRefresh();
+});
+document.getElementById("replay-granularity").addEventListener("change", (e) => {
+  document.getElementById("granularity").value = e.target.value;
+  loadCandles(); scheduleAutoRefresh();
+});
+
+/* ============================================================
+   AUTO-REFRESH — chart nggak akan "diam" di mode live.
+   Interval disesuaikan per timeframe biar nggak boros kuota API gratis.
+   ============================================================ */
+const AUTO_REFRESH_MS = {
+  M1: 30_000, M5: 60_000, M15: 5 * 60_000,
+  M30: 10 * 60_000, H1: 15 * 60_000, H4: 30 * 60_000,
+};
+let autoRefreshTimer = null;
+
+function scheduleAutoRefresh() {
+  if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+  const ms = AUTO_REFRESH_MS[currentGranularity] || 60_000;
+  autoRefreshTimer = setInterval(() => {
+    // Jangan refresh kalau lagi mode replay (ganggu sesi belajar),
+    // atau kalau tab lagi nggak aktif (hemat kuota API).
+    if (mode === "live" && !document.hidden) loadCandles(true);
+  }, ms);
+}
+
+// Saat tab balik aktif setelah lama hidden, langsung tarik data terbaru.
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && mode === "live") loadCandles(true);
+});
+
+/* ============================================================
+   COUNTDOWN KE PENUTUPAN CANDLE — murni hitungan waktu lokal di HP,
+   nggak butuh request ke server sama sekali. Ini yang bikin chart
+   "kelihatan hidup" walau data candle-nya sendiri baru update
+   berkala (bukan streaming tiap detik seperti TradingView asli,
+   karena itu butuh WebSocket berbayar).
+   ============================================================ */
+const GRANULARITY_SECONDS = {
+  M1: 60, M5: 300, M15: 900, M30: 1800, H1: 3600, H4: 14400,
+};
+let lastPeriodBoundary = null;
+
+function updateCountdown() {
+  const el = document.getElementById("countdown");
+  if (mode !== "live") { el.style.display = "none"; return; }
+  el.style.display = "block";
+
+  const periodSec = GRANULARITY_SECONDS[currentGranularity] || 60;
+  const nowSec = Date.now() / 1000;
+  const boundaryIndex = Math.floor(nowSec / periodSec);
+
+  // Candle baru saja closed -> tarik data terbaru, jangan nunggu jadwal
+  // auto-refresh biasa (yang interval-nya lebih longgar buat hemat kuota).
+  if (lastPeriodBoundary !== null && boundaryIndex !== lastPeriodBoundary) {
+    setTimeout(() => loadCandles(true), 3000); // kasih jeda dikit, biar provider selesai closing candle-nya
+  }
+  lastPeriodBoundary = boundaryIndex;
+
+  const remaining = periodSec - (nowSec % periodSec);
+  const mm = Math.floor(remaining / 60).toString().padStart(2, "0");
+  const ss = Math.floor(remaining % 60).toString().padStart(2, "0");
+  el.textContent = `${mm}:${ss}`;
+
+  // Taruh badge-nya persis di bawah label harga terakhir di sumbu kanan,
+  // bukan nempel di toolbar atas.
+  if (allCandles.length) {
+    const lastClose = allCandles[allCandles.length - 1].close;
+    const y = candleSeries.priceToCoordinate(lastClose);
+    if (y != null) el.style.top = (y + 22) + "px";
+  }
+}
+setInterval(updateCountdown, 1000);
+
+/* ============================================================
+   MODE REPLAY
+   ============================================================ */
+const replaySlider = document.getElementById("replay-slider");
+const replayToggleBtn = document.getElementById("replay-toggle-mode");
+const replayModeDot = document.getElementById("replay-mode-dot");
+
+function setMode(newMode) {
+  mode = newMode;
+  replayModeDot.classList.toggle("replay", mode === "replay");
+  if (mode === "live") {
+    visibleCount = allCandles.length;
+    stopReplay();
+    renderVisibleData();
+  }
+}
+replayToggleBtn.addEventListener("click", () => setMode(mode === "live" ? "replay" : "live"));
+
+// Tombol di topbar buat buka/tutup panel replay (default ketutup)
+const replayOverlay = document.getElementById("replay-overlay");
+document.getElementById("replay-open-btn").addEventListener("click", () => {
+  replayOverlay.classList.toggle("show");
+});
+
+replaySlider.addEventListener("input", () => {
+  if (mode !== "replay") setMode("replay");
+  visibleCount = Math.max(15, parseInt(replaySlider.value) + 1);
+  renderVisibleData();
+});
+
+document.getElementById("replay-reset").addEventListener("click", () => {
+  setMode("replay");
+  visibleCount = 15;
+  replaySlider.value = 14;
+  renderVisibleData();
+});
+
+document.getElementById("replay-step").addEventListener("click", () => {
+  if (mode !== "replay") setMode("replay");
+  visibleCount = Math.min(allCandles.length, visibleCount + 1);
+  replaySlider.value = visibleCount - 1;
+  renderVisibleData();
+});
+
+document.getElementById("replay-step-back").addEventListener("click", () => {
+  if (mode !== "replay") setMode("replay");
+  visibleCount = Math.max(15, visibleCount - 1);
+  replaySlider.value = visibleCount - 1;
+  renderVisibleData();
+});
+
+function stopReplay() {
+  if (replayTimer) { clearInterval(replayTimer); replayTimer = null; }
+  document.getElementById("replay-play").textContent = "▶";
+}
+
+document.getElementById("replay-play").addEventListener("click", (e) => {
+  if (mode !== "replay") setMode("replay");
+  if (replayTimer) {
+    stopReplay();
+  } else {
+    e.target.textContent = "⏸";
+    replayTimer = setInterval(() => {
+      if (visibleCount >= allCandles.length) { stopReplay(); return; }
+      visibleCount++;
+      replaySlider.value = visibleCount - 1;
+      renderVisibleData();
+    }, 400);
+  }
+});
+
+/* ============================================================
+   DRAWING TOOLS (trend line, rectangle) — via Series Primitive API
+   ============================================================ */
+class LinePrimitive {
+  constructor(p1, p2, color = "#3b82f6") { this._p1 = p1; this._p2 = p2; this._color = color; this._selected = false; }
+  updateAllViews() {}
+  setPoint2(p2) { this._p2 = p2; }
+  setSelected(v) { this._selected = v; }
+  hitTest(x, y) {
+    const xs = mainChart.timeScale();
+    const x1 = xs.timeToCoordinate(this._p1.time), x2 = xs.timeToCoordinate(this._p2.time);
+    const y1 = candleSeries.priceToCoordinate(this._p1.price), y2 = candleSeries.priceToCoordinate(this._p2.price);
+    if (x1 == null || x2 == null || y1 == null || y2 == null) return false;
+    return distToSegment(x, y, x1, y1, x2, y2) <= 12;
+  }
+  paneViews() {
+    const p1 = this._p1, p2 = this._p2;
+    const color = this._selected ? "#facc15" : this._color;
+    const width = this._selected ? 3 : 2;
+    return [{
+      renderer: () => ({
+        draw: (target) => {
+          target.useBitmapCoordinateSpace((scope) => {
+            const ctx = scope.context;
+            const xs = mainChart.timeScale();
+            const x1 = xs.timeToCoordinate(p1.time), x2 = xs.timeToCoordinate(p2.time);
+            const y1 = candleSeries.priceToCoordinate(p1.price), y2 = candleSeries.priceToCoordinate(p2.price);
+            if (x1 == null || x2 == null || y1 == null || y2 == null) return;
+            ctx.strokeStyle = color;
+            ctx.lineWidth = width * scope.horizontalPixelRatio;
+            ctx.beginPath();
+            ctx.moveTo(x1 * scope.horizontalPixelRatio, y1 * scope.verticalPixelRatio);
+            ctx.lineTo(x2 * scope.horizontalPixelRatio, y2 * scope.verticalPixelRatio);
+            ctx.stroke();
+          });
+        },
+      }),
+    }];
+  }
+}
+
+class RectPrimitive {
+  constructor(p1, p2, color = "rgba(59,130,246,0.2)") { this._p1 = p1; this._p2 = p2; this._color = color; this._selected = false; }
+  updateAllViews() {}
+  setPoint2(p2) { this._p2 = p2; }
+  setSelected(v) { this._selected = v; }
+  hitTest(x, y) {
+    const xs = mainChart.timeScale();
+    const x1 = xs.timeToCoordinate(this._p1.time), x2 = xs.timeToCoordinate(this._p2.time);
+    const y1 = candleSeries.priceToCoordinate(this._p1.price), y2 = candleSeries.priceToCoordinate(this._p2.price);
+    if (x1 == null || x2 == null || y1 == null || y2 == null) return false;
+    const minX = Math.min(x1, x2), maxX = Math.max(x1, x2);
+    const minY = Math.min(y1, y2), maxY = Math.max(y1, y2);
+    return x >= minX - 8 && x <= maxX + 8 && y >= minY - 8 && y <= maxY + 8;
+  }
+  paneViews() {
+    const p1 = this._p1, p2 = this._p2;
+    const selected = this._selected;
+    const fillColor = this._color;
+    return [{
+      renderer: () => ({
+        draw: (target) => {
+          target.useBitmapCoordinateSpace((scope) => {
+            const ctx = scope.context;
+            const xs = mainChart.timeScale();
+            const x1 = xs.timeToCoordinate(p1.time), x2 = xs.timeToCoordinate(p2.time);
+            const y1 = candleSeries.priceToCoordinate(p1.price), y2 = candleSeries.priceToCoordinate(p2.price);
+            if (x1 == null || x2 == null || y1 == null || y2 == null) return;
+            const rx = Math.min(x1, x2) * scope.horizontalPixelRatio;
+            const ry = Math.min(y1, y2) * scope.verticalPixelRatio;
+            const rw = Math.abs(x2 - x1) * scope.horizontalPixelRatio;
+            const rh = Math.abs(y2 - y1) * scope.verticalPixelRatio;
+            ctx.fillStyle = fillColor;
+            ctx.fillRect(rx, ry, rw, rh);
+            ctx.strokeStyle = selected ? "#facc15" : "#3b82f6";
+            ctx.lineWidth = (selected ? 2.5 : 1) * scope.horizontalPixelRatio;
+            ctx.strokeRect(rx, ry, rw, rh);
+          });
+        },
+      }),
+    }];
+  }
+}
+
+function distToSegment(px, py, x1, y1, x2, y2) {
+  const A = px - x1, B = py - y1, C = x2 - x1, D = y2 - y1;
+  const dot = A * C + B * D;
+  const lenSq = C * C + D * D;
+  let t = lenSq !== 0 ? dot / lenSq : -1;
+  t = Math.max(0, Math.min(1, t));
+  const xx = x1 + t * C, yy = y1 + t * D;
+  return Math.hypot(px - xx, py - yy);
+}
+
+// Paksa chart nggambar ulang segera (dipakai pas preview garis/kotak masih
+// digambar & pas objek dipilih/di-highlight) — pakai parameter resmi
+// forceRepaint dari resize(), bukan trik nggak resmi.
+function forceRedraw() {
+  mainChart.resize(chartContainer.clientWidth, chartContainer.clientHeight, true);
+}
+
+function setActiveTool(tool) {
+  activeTool = tool;
+  deselectAll();
+  ["cursor", "trend", "rect"].forEach(t => {
+    document.getElementById(`tool-${t}`).classList.toggle("active", t === tool);
+  });
+  // Matiin gesture geser/zoom bawaan chart pas lagi gambar trend/rect,
+  // biar jari nggak dianggap "geser chart" pas lagi nggambar.
+  const drawingActive = tool === "trend" || tool === "rect";
+  mainChart.applyOptions({ handleScroll: !drawingActive, handleScale: !drawingActive });
+}
+
+document.getElementById("tool-cursor").addEventListener("click", () => setActiveTool("cursor"));
+document.getElementById("tool-trend").addEventListener("click", () => setActiveTool("trend"));
+document.getElementById("tool-rect").addEventListener("click", () => setActiveTool("rect"));
+
+document.getElementById("btn-clear-drawings").addEventListener("click", () => {
+  drawings.forEach(d => candleSeries.detachPrimitive(d.primitive));
+  drawings = [];
+  priceLines.forEach(pl => candleSeries.removePriceLine(pl.line));
+  priceLines = [];
+  deselectAll();
+});
+
+/* ============================================================
+   GAMBAR LANGSUNG (drag) buat Trend Line & Kotak — bukan 2x tap lagi.
+   Pakai pointer event mentah (bukan cuma subscribeClick) karena kita
+   butuh update TIAP GERAKAN jari, bukan cuma pas dilepas.
+   ============================================================ */
+let dragStart = null;
+let previewPrimitive = null;
+
+// Pelacak berapa jari yang lagi nempel di chart. Ini penting: kalau lagi
+// nge-drag garis/gambar pakai 1 jari terus jari ke-2 nempel (mau pinch-zoom),
+// kita HARUS batalin drag & balikin kontrol geser/zoom ke chart library,
+// biar gesture 2 jari nggak ketahan sama logic drawing kita sendiri.
+const activePointers = new Set();
+chartContainer.addEventListener("pointerdown", (ev) => activePointers.add(ev.pointerId));
+function releasePointer(ev) { activePointers.delete(ev.pointerId); }
+chartContainer.addEventListener("pointerup", releasePointer);
+chartContainer.addEventListener("pointercancel", releasePointer);
+
+function getChartPoint(clientX, clientY) {
+  const rect = chartContainer.getBoundingClientRect();
+  const x = clientX - rect.left, y = clientY - rect.top;
+  const time = mainChart.timeScale().coordinateToTime(x);
+  const price = candleSeries.coordinateToPrice(y);
+  if (time == null || price == null) return null;
+  return { time, price, x, y };
+}
+
+chartContainer.addEventListener("pointerdown", (ev) => {
+  if (activeTool !== "trend" && activeTool !== "rect") return;
+  if (activePointers.size > 1) return; // udah ada jari lain -> ini pinch-zoom, bukan gambar
+  const pt = getChartPoint(ev.clientX, ev.clientY);
+  if (!pt) return;
+  dragStart = pt;
+  previewPrimitive = activeTool === "trend"
+    ? new LinePrimitive({ time: pt.time, price: pt.price }, { time: pt.time, price: pt.price })
+    : new RectPrimitive({ time: pt.time, price: pt.price }, { time: pt.time, price: pt.price });
+  candleSeries.attachPrimitive(previewPrimitive);
+  ev.preventDefault();
+});
+
+chartContainer.addEventListener("pointermove", (ev) => {
+  if (!dragStart || !previewPrimitive) return;
+  if (activePointers.size > 1) { cancelDrawing(); return; } // jari ke-2 nempel -> batal, biar bisa pinch-zoom
+  const pt = getChartPoint(ev.clientX, ev.clientY);
+  if (!pt) return;
+  previewPrimitive.setPoint2({ time: pt.time, price: pt.price });
+  forceRedraw();
+});
+
+function cancelDrawing() {
+  if (previewPrimitive) candleSeries.detachPrimitive(previewPrimitive);
+  dragStart = null;
+  previewPrimitive = null;
+}
+
+function finishDrawing() {
+  if (!dragStart || !previewPrimitive) return;
+  drawings.push({ type: activeTool, primitive: previewPrimitive });
+  dragStart = null;
+  previewPrimitive = null;
+  setActiveTool("cursor");
+}
+chartContainer.addEventListener("pointerup", finishDrawing);
+chartContainer.addEventListener("pointercancel", cancelDrawing);
+
+/* ============================================================
+   BUY/SELL — tap sekali langsung masang 3 garis sekaligus:
+   Entry (Buy/Sell), TP, dan SL — kayak order beneran, bukan cuma
+   1 garis polos. Default jarak TP 100 pip, SL 50 pip dari entry,
+   nanti masing-masing garis bisa digeser/diatur sendiri-sendiri.
+   ============================================================ */
+const PIP_SIZE = {
+  XAU_USD: 0.1,
+  EUR_USD: 0.0001,
+  GBP_USD: 0.0001,
+  USD_JPY: 0.01,
+  BTC_USD: 1,
+};
+const DEFAULT_TP_PIPS = 100;
+const DEFAULT_SL_PIPS = 50;
+
+function labelForPriceLine(pl) {
+  if (pl.role === "tp") return "Garis TP";
+  if (pl.role === "sl") return "Garis SL";
+  return pl.isBuy ? "Garis Buy" : "Garis Sell";
+}
+
+function placeBracketOrder(isBuy) {
+  if (!allCandles.length) return;
+  const entryPrice = allCandles.slice(0, visibleCount)[visibleCount - 1].close;
+  const pipSize = PIP_SIZE[currentInstrument] || 0.0001;
+  const dir = isBuy ? 1 : -1; // Buy: TP di atas entry, SL di bawah. Sell: kebalikannya.
+  const tpPrice = entryPrice + dir * DEFAULT_TP_PIPS * pipSize;
+  const slPrice = entryPrice - dir * DEFAULT_SL_PIPS * pipSize;
+
+  const entryLine = candleSeries.createPriceLine({
+    price: entryPrice,
+    color: isBuy ? "#26a69a" : "#ef5350",
+    lineWidth: 2,
+    lineStyle: LightweightCharts.LineStyle.Solid,
+    axisLabelVisible: true,
+    title: isBuy ? "Buy" : "Sell",
+  });
+  const tpLine = candleSeries.createPriceLine({
+    price: tpPrice,
+    color: "#26a69a",
+    lineWidth: 1,
+    lineStyle: LightweightCharts.LineStyle.Dashed,
+    axisLabelVisible: true,
+    title: "TP",
+  });
+  const slLine = candleSeries.createPriceLine({
+    price: slPrice,
+    color: "#ef5350",
+    lineWidth: 1,
+    lineStyle: LightweightCharts.LineStyle.Dashed,
+    axisLabelVisible: true,
+    title: "SL",
+  });
+
+  priceLines.push({ line: entryLine, price: entryPrice, isBuy, role: "entry" });
+  priceLines.push({ line: tpLine, price: tpPrice, isBuy, role: "tp" });
+  priceLines.push({ line: slLine, price: slPrice, isBuy, role: "sl" });
+}
+
+document.getElementById("btn-sell-market").addEventListener("click", () => placeBracketOrder(false));
+document.getElementById("btn-buy-market").addEventListener("click", () => placeBracketOrder(true));
+
+mainChart.subscribeClick((param) => {
+  if (activeTool === "cursor") handleSelectTap(param);
+});
+
+/* ============================================================
+   GESER GARIS BUY/SELL/TP/SL LANGSUNG PAKAI JARI (mode Cursor).
+   Beda dari trend/rect: ini nggak digambar dari 0, tapi menggeser
+   garis yang UDAH ADA. Tap-tanpa-geser tetap kepilih (buka actionbar);
+   tap-sambil-geser akan memindah posisi garisnya secara live.
+   ============================================================ */
+let draggingLine = null;
+
+chartContainer.addEventListener("pointerdown", (ev) => {
+  if (activeTool !== "cursor") return;
+  if (activePointers.size > 1) return; // lagi pinch-zoom, jangan mulai drag garis
+  const pt = getChartPoint(ev.clientX, ev.clientY);
+  if (!pt) return;
+
+  // Cari garis TERDEKAT dalam radius toleransi, bukan yang pertama ketemu —
+  // penting kalau beberapa garis (Buy/Sell/TP/SL) numpuk berdekatan.
+  let closest = null, closestDist = 16; // toleransi ~16px, lebih longgar biar nggak "kaku"
+  for (const pl of priceLines) {
+    const plY = candleSeries.priceToCoordinate(pl.price);
+    if (plY == null) continue;
+    const dist = Math.abs(plY - pt.y);
+    if (dist <= closestDist) { closestDist = dist; closest = pl; }
+  }
+  if (!closest) return;
+
+  draggingLine = closest;
+  mainChart.applyOptions({ handleScroll: false, handleScale: false });
+  ev.preventDefault();
+});
+
+chartContainer.addEventListener("pointermove", (ev) => {
+  if (!draggingLine) return;
+  if (activePointers.size > 1) { // jari ke-2 nempel -> batalin drag, balikin gesture chart
+    mainChart.applyOptions({ handleScroll: true, handleScale: true });
+    draggingLine = null;
+    return;
+  }
+  const pt = getChartPoint(ev.clientX, ev.clientY);
+  if (!pt) return;
+  draggingLine.price = pt.price;
+  draggingLine.line.applyOptions({ price: pt.price });
+});
+
+chartContainer.addEventListener("pointerup", () => {
+  if (!draggingLine) return;
+  mainChart.applyOptions({ handleScroll: true, handleScale: true });
+  deselectAll();
+  selectedObject = { kind: "priceline", ref: draggingLine };
+  showSelectActionbar(labelForPriceLine(draggingLine), true);
+  draggingLine = null;
+});
+chartContainer.addEventListener("pointercancel", () => {
+  if (!draggingLine) return;
+  mainChart.applyOptions({ handleScroll: true, handleScale: true });
+  draggingLine = null;
+});
+
+document.getElementById("pip-apply-btn").addEventListener("click", () => {
+  if (!selectedObject || selectedObject.kind !== "priceline") return;
+  const pipsVal = parseFloat(document.getElementById("pip-input").value);
+  if (isNaN(pipsVal)) return;
+  const pipSize = PIP_SIZE[currentInstrument] || 0.0001;
+  const newPrice = selectedObject.ref.price + pipsVal * pipSize;
+  selectedObject.ref.price = newPrice;
+  selectedObject.ref.line.applyOptions({ price: newPrice });
+});
+
+/* ============================================================
+   PILIH & HAPUS SATU OBJEK — bukan "Hapus Gambar" yang buang semuanya.
+   Mode cursor: tap dekat objek buat pilih, muncul bar kecil di bawah
+   buat konfirmasi hapus objek ITU SAJA.
+   ============================================================ */
+let selectedObject = null; // { kind: 'drawing'|'priceline', ref }
+
+function deselectAll() {
+  if (selectedObject && selectedObject.kind === "drawing") {
+    selectedObject.ref.primitive.setSelected(false);
+    forceRedraw();
+  }
+  selectedObject = null;
+  document.getElementById("select-actionbar").classList.remove("show");
+}
+
+function handleSelectTap(param) {
+  if (!param.point) { deselectAll(); return; }
+  const x = param.point.x, y = param.point.y;
+
+  // Garis Buy/Sell ditangani lewat drag (lihat blok pointerdown di atas),
+  // jadi di sini cukup cek trend line / kotak aja.
+  for (let i = drawings.length - 1; i >= 0; i--) {
+    const d = drawings[i];
+    if (d.primitive.hitTest(x, y)) {
+      deselectAll();
+      d.primitive.setSelected(true);
+      selectedObject = { kind: "drawing", ref: d };
+      forceRedraw();
+      showSelectActionbar(d.type === "trend" ? "Trend Line" : "Kotak", false);
+      return;
+    }
+  }
+
+  deselectAll();
+}
+
+function showSelectActionbar(label, showPipControl) {
+  document.getElementById("select-label").textContent = label + " dipilih";
+  document.getElementById("pip-adjust-group").classList.toggle("show", !!showPipControl);
+  document.getElementById("select-actionbar").classList.add("show");
+}
+
+document.getElementById("select-delete-btn").addEventListener("click", () => {
+  if (!selectedObject) return;
+  if (selectedObject.kind === "drawing") {
+    candleSeries.detachPrimitive(selectedObject.ref.primitive);
+    drawings = drawings.filter(d => d !== selectedObject.ref);
+  } else {
+    candleSeries.removePriceLine(selectedObject.ref.line);
+    priceLines = priceLines.filter(pl => pl !== selectedObject.ref);
+  }
+  selectedObject = null;
+  document.getElementById("select-actionbar").classList.remove("show");
+  forceRedraw();
+});
+
+document.getElementById("select-cancel-btn").addEventListener("click", deselectAll);
+
+/* ============================================================
+   AI CHAT PANEL
+   ============================================================ */
+const aiPopup = document.getElementById("ai-popup");
+document.getElementById("ai-fab").addEventListener("click", () => aiPopup.classList.toggle("open"));
+document.getElementById("ai-popup-close").addEventListener("click", () => aiPopup.classList.remove("open"));
+
+const aiLog = document.getElementById("ai-log");
+function addMsg(text, cls) {
+  const div = document.createElement("div");
+  div.className = "msg " + cls;
+  div.textContent = text;
+  aiLog.appendChild(div);
+  aiLog.scrollTop = aiLog.scrollHeight;
+}
+
+async function sendAiQuestion() {
+  const input = document.getElementById("ai-input");
+  const question = input.value.trim();
+  if (!question) return;
+  input.value = "";
+  addMsg(question, "user");
+
+  const thinkingDiv = document.createElement("div");
+  thinkingDiv.className = "msg ai";
+  thinkingDiv.textContent = "Menganalisa...";
+  aiLog.appendChild(thinkingDiv);
+  aiLog.scrollTop = aiLog.scrollHeight;
+
+  try {
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        question,
+        instrument: currentInstrument,
+        granularity: currentGranularity,
+        candles: allCandles.slice(0, visibleCount),
+      }),
+    });
+    const data = await res.json();
+    thinkingDiv.remove();
+    if (data.error) addMsg(data.error, "err");
+    else addMsg(data.answer, "ai");
+  } catch (e) {
+    thinkingDiv.remove();
+    addMsg("Gagal konek ke server: " + e.message, "err");
+  }
+}
+document.getElementById("ai-send").addEventListener("click", sendAiQuestion);
+document.getElementById("ai-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") sendAiQuestion();
+});
+
+/* ============================================================
+   INIT
+   ============================================================ */
+resizeCharts();
+loadCandles();
+scheduleAutoRefresh();
+</script>
+</body>
+</html>
